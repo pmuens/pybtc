@@ -54,6 +54,19 @@ class Point:
             y = s * (self.x - x) - self.y
             return self.__class__(x, y, self.a, self.b)
 
+    def __rmul__(self, coefficient):
+        coef = coefficient
+        current = self
+        # Product at `0` (Point at infinity)
+        result = self.__class__(None, None, self.a, self.b)
+        # Using binary expansion for multiplication
+        while coef:
+            if coef & 1:
+                result += current
+            current += current
+            coef >>= 1
+        return result
+
 
 class PointTest(TestCase):
     def test_ne(self):
