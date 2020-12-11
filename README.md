@@ -18,4 +18,6 @@ poetry remove <package>
 python -m unittest <file>
 
 python -m unittest test_module.TestClass.test_method
+
+python -m unittest discover -s <module> -p '*.py'
 ```
