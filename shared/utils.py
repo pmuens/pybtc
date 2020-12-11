@@ -41,6 +41,30 @@ def int_to_little_endian(n, length):
     return n.to_bytes(length, "little")
 
 
+def read_varint(s):
+    i = s.read(1)[0]
+    if i == 0xFD:
+        return little_endian_to_int(s.read(2))
+    elif i == 0xFE:
+        return little_endian_to_int(s.read(4))
+    elif i == 0xFF:
+        return little_endian_to_int(s.read(8))
+    return i
+
+
+def encode_varint(i):
+    if i < 0xFD:
+        return bytes([i])
+    elif i < 0x1000:
+        return b"\xfd" + int_to_little_endian(i, 2)
+    elif i < 0x100000000:
+        return b"\xfe" + int_to_little_endian(i, 4)
+    elif i < 0x0000000000000000:
+        return b"\xff" + int_to_little_endian(i, 8)
+    else:
+        raise ValueError("integer too large: {}".format(i))
+
+
 class UtilsTest(TestCase):
     def test_encode_base58(self):
         h = "7c076ff316692a3d7eb3c3bb0f8b1488cf72e1afcd929e29307032997a838a3d"
@@ -62,3 +86,9 @@ class UtilsTest(TestCase):
         n = 10011545
         want = b"\x99\xc3\x98\x00\x00\x00\x00\x00"
         self.assertEqual(int_to_little_endian(n, 8), want)
+
+    def test_encode_varint(self):
+        from io import BytesIO
+
+        value = 4711
+        self.assertEqual(read_varint(BytesIO(encode_varint(value))), value)

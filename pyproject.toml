@@ -6,5 +6,6 @@ authors = ["Philipp Muens <raute1337@gmx.de>"]
 
 [tool.poetry.dependencies]
 python = "^3.8"
+requests = "^2.25.0"
 
 [tool.poetry.dev-dependencies]

@@ -5,7 +5,7 @@ from unittest import TestCase
 
 from ecc.S256Point import G, N
 from ecc.Signature import Signature
-from ecc.utils import encode_base58_checksum
+from shared.utils import encode_base58_checksum
 
 
 class PrivateKey:

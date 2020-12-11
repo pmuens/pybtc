@@ -2,7 +2,7 @@ from unittest.case import TestCase
 
 from ecc.Point import Point
 from ecc.S256Field import S256Field, P
-from ecc.utils import encode_base58, encode_base58_checksum, hash160
+from shared.utils import encode_base58_checksum, hash160
 
 A = 0
 B = 7
