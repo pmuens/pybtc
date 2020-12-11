@@ -5,6 +5,7 @@ from unittest import TestCase
 
 from ecc.S256Point import G, N
 from ecc.Signature import Signature
+from ecc.utils import encode_base58_checksum
 
 
 class PrivateKey:
@@ -44,6 +45,18 @@ class PrivateKey:
             k = hmac.new(k, v + b"\x00", s256).digest()
             v = hmac.new(k, v, s256).digest()
 
+    def wif(self, compressed=True, testnet=False):
+        secret_bytes = self.secret.to_bytes(32, "big")
+        if testnet:
+            prefix = b"\xef"
+        else:
+            prefix = b"\x80"
+        if compressed:
+            suffix = b"\x01"
+        else:
+            suffix = b""
+        return encode_base58_checksum(prefix + secret_bytes + suffix)
+
 
 class PrivateKeyTest(TestCase):
     def test_sign(self):
@@ -51,3 +64,24 @@ class PrivateKeyTest(TestCase):
         z = randint(0, 2 ** 256)
         sig = pk.sign(z)
         self.assertTrue(pk.point.verify(z, sig))
+
+    def test_wif_compressed_testnet(self):
+        from ecc.PrivateKey import PrivateKey
+
+        priv = PrivateKey(5003)
+        result = priv.wif(compressed=True, testnet=True)
+        self.assertEqual(result, "cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN8rFTv2sfUK")
+
+    def test_wif_uncompressed_testnet(self):
+        from ecc.PrivateKey import PrivateKey
+
+        priv = PrivateKey(2021 ** 5)
+        result = priv.wif(compressed=False, testnet=True)
+        self.assertEqual(result, "91avARGdfge8E4tZfYLoxeJ5sGBdNJQH4kvjpWAxgzczjbCwxic")
+
+    def test_wif_compressed_mainnet(self):
+        from ecc.PrivateKey import PrivateKey
+
+        priv = PrivateKey(0x54321DEADBEEF)
+        result = priv.wif()
+        self.assertEqual(result, "KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgiuQJv1h8Ytr2S53a")
