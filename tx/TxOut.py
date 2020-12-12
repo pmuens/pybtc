@@ -1,3 +1,4 @@
+from script.Script import Script
 from shared.utils import int_to_little_endian, little_endian_to_int
 
 
