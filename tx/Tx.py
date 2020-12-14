@@ -10,6 +10,7 @@ from shared.utils import (
     int_to_little_endian,
     little_endian_to_int,
     read_varint,
+    SIGHASH_ALL,
 )
 
 
@@ -175,6 +176,54 @@ class Tx:
             output_sum += tx_out.amount
         return input_sum - output_sum
 
+    def sig_hash(self, input_index):
+        s = int_to_little_endian(self.version, 4)
+        s += encode_varint(len(self.tx_ins))
+        for i, tx_in in enumerate(self.tx_ins):
+            if i == input_index:
+                s += TxIn(
+                    prev_tx=tx_in.prev_tx,
+                    prev_index=tx_in.prev_index,
+                    script_sig=tx_in.script_pubkey(self.testnet),
+                    sequence=tx_in.sequence,
+                ).serialize()
+            else:
+                s += TxIn(
+                    prev_tx=tx_in.prev_tx,
+                    prev_index=tx_in.prev_index,
+                    sequence=tx_in.sequence,
+                ).serialize()
+        s += encode_varint(len(self.tx_outs))
+        for tx_out in self.tx_outs:
+            s += tx_out.serialize()
+        s += int_to_little_endian(self.locktime, 4)
+        s += int_to_little_endian(SIGHASH_ALL, 4)
+        h256 = hash256(s)
+        return int.from_bytes(h256, "big")
+
+    def verify_input(self, input_index):
+        tx_in = self.tx_ins[input_index]
+        script_pubkey = tx_in.script_pubkey(self.testnet)
+        z = self.sig_hash(input_index)
+        combined = tx_in.script_sig + script_pubkey
+        return combined.evaluate(z)
+
+    def verify(self):
+        if self.fee() < 0:
+            return False
+        for i in range(len(self.tx_ins)):
+            if not self.verify_input(i):
+                return False
+        return True
+
+    def sign_input(self, input_index, private_key):
+        z = self.sig_hash(input_index)
+        der = private_key.sign(z).der()
+        sig = der + SIGHASH_ALL.to_bytes(1, "big")
+        sec = private_key.point.sec()
+        self.tx_ins[input_index].script_sig = Script([sig, sec])
+        return self.verify_input(input_index)
+
     @classmethod
     def parse(cls, s, testnet=False):
         version = little_endian_to_int(s.read(4))
@@ -248,6 +297,28 @@ class TxTest(TestCase):
         tx = Tx.parse(stream)
         self.assertEqual(tx.locktime, 410393)
 
+    def test_serialize(self):
+        raw_tx = bytes.fromhex(
+            "0100000001813f79011acb80925dfe69b3def355fe914bd1d96a3f5f71bf8303c6a989c7d1000000006b483045022100ed81ff192e75a3fd2304004dcadb746fa5e24c5031ccfcf21320b0277457c98f02207a986d955c6e0cb35d446a89d3f56100f4d7f67801c31967743a9c8e10615bed01210349fc4e631e3624a545de3f89f5d8684c7b8138bd94bdd531d2e213bf016b278afeffffff02a135ef01000000001976a914bc3b654dca7e56b04dca18f2566cdaf02e8d9ada88ac99c39800000000001976a9141c4bc762dd5423e332166702cb75f40df79fea1288ac19430600"
+        )
+        stream = BytesIO(raw_tx)
+        tx = Tx.parse(stream)
+        self.assertEqual(tx.serialize(), raw_tx)
+
+    def test_input_value(self):
+        tx_hash = "d1c789a9c60383bf715f3f6ad9d14b91fe55f3deb369fe5d9280cb1a01793f81"
+        index = 0
+        want = 42505594
+        tx_in = TxIn(bytes.fromhex(tx_hash), index)
+        self.assertEqual(tx_in.value(), want)
+
+    def test_input_pubkey(self):
+        tx_hash = "d1c789a9c60383bf715f3f6ad9d14b91fe55f3deb369fe5d9280cb1a01793f81"
+        index = 0
+        tx_in = TxIn(bytes.fromhex(tx_hash), index)
+        want = bytes.fromhex("1976a914a802fc56c704ce87c42d7c92eb75e7896bdc41ae88ac")
+        self.assertEqual(tx_in.script_pubkey().serialize(), want)
+
     def test_fee(self):
         raw_tx = bytes.fromhex(
             "0100000001813f79011acb80925dfe69b3def355fe914bd1d96a3f5f71bf8303c6a989c7d1000000006b483045022100ed81ff192e75a3fd2304004dcadb746fa5e24c5031ccfcf21320b0277457c98f02207a986d955c6e0cb35d446a89d3f56100f4d7f67801c31967743a9c8e10615bed01210349fc4e631e3624a545de3f89f5d8684c7b8138bd94bdd531d2e213bf016b278afeffffff02a135ef01000000001976a914bc3b654dca7e56b04dca18f2566cdaf02e8d9ada88ac99c39800000000001976a9141c4bc762dd5423e332166702cb75f40df79fea1288ac19430600"
@@ -261,3 +332,43 @@ class TxTest(TestCase):
         stream = BytesIO(raw_tx)
         tx = Tx.parse(stream)
         self.assertEqual(tx.fee(), 140500)
+
+    def test_sig_hash(self):
+        tx = TxFetcher.fetch(
+            "452c629d67e41baec3ac6f04fe744b4b9617f8f859c63b3002f8684e7a4fee03"
+        )
+        want = int(
+            "27e0c5994dec7824e56dec6b2fcb342eb7cdb0d0957c2fce9882f715e85d81a6", 16
+        )
+        self.assertEqual(tx.sig_hash(0), want)
+
+    def test_verify_p2pkh(self):
+        tx = TxFetcher.fetch(
+            "452c629d67e41baec3ac6f04fe744b4b9617f8f859c63b3002f8684e7a4fee03"
+        )
+        self.assertTrue(tx.verify())
+        tx = TxFetcher.fetch(
+            "5418099cc755cb9dd3ebc6cf1a7888ad53a1a3beb5a025bce89eb1bf7f1650a2",
+            testnet=True,
+        )
+        self.assertTrue(tx.verify())
+
+    def test_verify_p2sh(self):
+        tx = TxFetcher.fetch(
+            "46df1a9484d0a81d03ce0ee543ab6e1a23ed06175c104a178268fad381216c2b"
+        )
+        self.assertTrue(tx.verify())
+
+    def test_sign_input(self):
+        from ecc.PrivateKey import PrivateKey
+
+        private_key = PrivateKey(secret=8675309)
+        stream = BytesIO(
+            bytes.fromhex(
+                "010000000199a24308080ab26e6fb65c4eccfadf76749bb5bfa8cb08f291320b3c21e56f0d0d00000000ffffffff02408af701000000001976a914d52ad7ca9b3d096a38e752c2018e6fbc40cdf26f88ac80969800000000001976a914507b27411ccf7f16f10297de6cef3f291623eddf88ac00000000"
+            )
+        )
+        tx_obj = Tx.parse(stream, testnet=True)
+        self.assertTrue(tx_obj.sign_input(0, private_key))
+        want = "010000000199a24308080ab26e6fb65c4eccfadf76749bb5bfa8cb08f291320b3c21e56f0d0d0000006b4830450221008ed46aa2cf12d6d81065bfabe903670165b538f65ee9a3385e6327d80c66d3b502203124f804410527497329ec4715e18558082d489b218677bd029e7fa306a72236012103935581e52c354cd2f484fe8ed83af7a3097005b2f9c60bff71d35bd795f54b67ffffffff02408af701000000001976a914d52ad7ca9b3d096a38e752c2018e6fbc40cdf26f88ac80969800000000001976a914507b27411ccf7f16f10297de6cef3f291623eddf88ac00000000"
+        self.assertEqual(tx_obj.serialize().hex(), want)

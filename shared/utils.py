@@ -2,6 +2,7 @@ import hashlib
 from unittest import TestCase
 
 
+SIGHASH_ALL = 1
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
@@ -19,6 +20,20 @@ def encode_base58(s):
         num, mod = divmod(num, 58)
         result = BASE58_ALPHABET[mod] + result
     return prefix + result
+
+
+def decode_base58(s):
+    num = 0
+    for c in s:
+        num *= 58
+        num += BASE58_ALPHABET.index(c)
+    combined = num.to_bytes(25, byteorder="big")
+    checksum = combined[-4:]
+    if hash256(combined[:-4])[:4] != checksum:
+        raise ValueError(
+            "bad address: {} {}".format(checksum, hash256(combined[:-4])[:4])
+        )
+    return combined[1:-4]
 
 
 def hash256(s):
@@ -66,10 +81,13 @@ def encode_varint(i):
 
 
 class UtilsTest(TestCase):
-    def test_encode_base58(self):
-        h = "7c076ff316692a3d7eb3c3bb0f8b1488cf72e1afcd929e29307032997a838a3d"
-        result = encode_base58(bytes.fromhex(h))
-        self.assertEqual(result, "9MA8fRQrT4u8Zj8ZRd6MAiiyaxb2Y1CMpvVkHQu5hVM6")
+    def test_base58(self):
+        addr = 'mnrVtF8DWjMu839VW3rBfgYaAfKk8983Xf'
+        h160 = decode_base58(addr).hex()
+        want = '507b27411ccf7f16f10297de6cef3f291623eddf'
+        self.assertEqual(h160, want)
+        got = encode_base58_checksum(b'\x6f' + bytes.fromhex(h160))
+        self.assertEqual(got, addr)
 
     def test_little_endian_to_int(self):
         h = bytes.fromhex("99c3980000000000")

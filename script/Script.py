@@ -10,6 +10,11 @@ from shared.utils import (
     read_varint,
 )
 
+
+def p2pkh_script(h160):
+    return Script([0x76, 0xA9, h160, 0x88, 0xAC])
+
+
 LOGGER = getLogger(__name__)
 
 
