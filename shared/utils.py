@@ -3,6 +3,7 @@ from unittest import TestCase
 
 
 SIGHASH_ALL = 1
+TWO_WEEKS = 60 * 60 * 24 * 14
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
@@ -96,6 +97,34 @@ def encode_varint(i):
         raise ValueError("integer too large: {}".format(i))
 
 
+def bits_to_target(bits):
+    exponent = bits[-1]
+    coefficient = little_endian_to_int(bits[:-1])
+    return coefficient * 256 ** (exponent - 3)
+
+
+def target_to_bits(target):
+    raw_bytes = target.to_bytes(32, "big")
+    raw_bytes = raw_bytes.lstrip(b"\x00")
+    if raw_bytes[0] > 0x7F:
+        exponent = len(raw_bytes) + 1
+        coefficient = b"\x00" + raw_bytes[:2]
+    else:
+        exponent = len(raw_bytes)
+        coefficient = raw_bytes[:3]
+    new_bits = coefficient[::-1] + bytes([exponent])
+    return new_bits
+
+
+def calculate_new_bits(previous_bits, time_differential):
+    if time_differential > TWO_WEEKS * 4:
+        time_differential = TWO_WEEKS * 4
+    if time_differential < TWO_WEEKS // 4:
+        time_differential = TWO_WEEKS // 4
+    new_target = bits_to_target(previous_bits) * time_differential // TWO_WEEKS
+    return target_to_bits(new_target)
+
+
 class UtilsTest(TestCase):
     def test_base58(self):
         addr = "mnrVtF8DWjMu839VW3rBfgYaAfKk8983Xf"
@@ -140,3 +169,9 @@ class UtilsTest(TestCase):
         self.assertEqual(h160_to_p2sh_address(h160, testnet=False), want)
         want = "2N3u1R6uwQfuobCqbCgBkpsgBxvr1tZpe7B"
         self.assertEqual(h160_to_p2sh_address(h160, testnet=True), want)
+
+    def test_calculate_new_bits(self):
+        prev_bits = bytes.fromhex("54d80118")
+        time_differential = 302400
+        want = bytes.fromhex("00157617")
+        self.assertEqual(calculate_new_bits(prev_bits, time_differential), want)
