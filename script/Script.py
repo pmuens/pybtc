@@ -1,10 +1,13 @@
 from io import BytesIO
+from hashlib import sha256
 from logging import getLogger
 from unittest import TestCase
 
 from script.op import OP_CODE_FUNCTIONS, OP_CODE_NAMES, op_equal, op_hash160, op_verify
 from shared.utils import (
     encode_varint,
+    h160_to_p2pkh_address,
+    h160_to_p2sh_address,
     int_to_little_endian,
     little_endian_to_int,
     read_varint,
@@ -13,6 +16,18 @@ from shared.utils import (
 
 def p2pkh_script(h160):
     return Script([0x76, 0xA9, h160, 0x88, 0xAC])
+
+
+def p2sh_script(h160):
+    return Script([0xA9, h160, 0x87])
+
+
+def p2wpkh_script(h160):
+    return Script([0x00, h160])
+
+
+def p2wsh_script(h256):
+    return Script([0x00, h256])
 
 
 LOGGER = getLogger(__name__)
@@ -24,6 +39,19 @@ class Script:
             self.cmds = []
         else:
             self.cmds = cmds
+
+    def __repr__(self):
+        result = []
+        for cmd in self.cmds:
+            if type(cmd) == int:
+                if OP_CODE_NAMES.get(cmd):
+                    name = OP_CODE_NAMES.get(cmd)
+                else:
+                    name = "OP_[{}]".format(cmd)
+                result.append(name)
+            else:
+                result.append(cmd.hex())
+        return " ".join(result)
 
     def __add__(self, other):
         return Script(self.cmds + other.cmds)
@@ -55,7 +83,7 @@ class Script:
         total = len(result)
         return encode_varint(total) + result
 
-    def evaluate(self, z):
+    def evaluate(self, z, witness):
         cmds = self.cmds[:]
         stack = []
         altstack = []
@@ -88,6 +116,7 @@ class Script:
                     and len(cmds[1]) == 20
                     and cmds[2] == 0x87
                 ):
+                    redeem_script = encode_varint(len(cmd)) + cmd
                     cmds.pop()
                     h160 = cmds.pop()
                     cmds.pop()
@@ -102,6 +131,28 @@ class Script:
                     redeem_script = encode_varint(len(cmd)) + cmd
                     stream = BytesIO(redeem_script)
                     cmds.extend(Script.parse(stream).cmds)
+                if len(stack) == 2 and stack[0] == b"" and len(stack[1]) == 20:
+                    h160 = stack.pop()
+                    stack.pop()
+                    cmds.extend(witness)
+                    cmds.extend(p2pkh_script(h160).cmds)
+                if len(stack) == 2 and stack[0] == b"" and len(stack[1]) == 32:
+                    s256 = stack.pop()
+                    stack.pop()
+                    cmds.extend(witness[:-1])
+                    witness_script = witness[-1]
+                    if s256 != sha256(witness_script):
+                        print(
+                            "bad sha256 {} vs {}".format(
+                                s256.hex(), sha256(witness_script).hex()
+                            )
+                        )
+                        return False
+                    stream = BytesIO(
+                        encode_varint(len(witness_script)) + witness_script
+                    )
+                    witness_script_cmds = Script.parse(stream).cmds
+                    cmds.extend(witness_script_cmds)
         if len(stack) == 0:
             return False
         if stack.pop() == b"":
@@ -127,6 +178,31 @@ class Script:
             and len(self.cmds[1]) == 20
             and self.cmds[2] == 0x87
         )
+
+    def is_p2wpkh_script_pubkey(self):
+        return (
+            len(self.cmds) == 2
+            and self.cmds[0] == 0x00
+            and type(self.cmds[1]) == bytes
+            and len(self.cmds[1]) == 20
+        )
+
+    def is_p2wsh_script_pubkey(self):
+        return (
+            len(self.cmds) == 2
+            and self.cmds[0] == 0x00
+            and type(self.cmds[1]) == bytes
+            and len(self.cmds[1]) == 32
+        )
+
+    def address(self, testnet=False):
+        if self.is_p2pkh_script_pubkey():
+            h160 = self.cmds[2]
+            return h160_to_p2pkh_address(h160, testnet)
+        elif self.is_p2sh_script_pubkey():
+            h160 = self.cmds[1]
+            return h160_to_p2sh_address(h160, testnet)
+        raise ValueError("Unknown ScriptPubKey")
 
     @classmethod
     def parse(cls, s):
@@ -201,3 +277,19 @@ class ScriptTest(TestCase):
         script_pubkey = BytesIO(bytes.fromhex(want))
         script = Script.parse(script_pubkey)
         self.assertEqual(script.serialize().hex(), want)
+
+    def test_address(self):
+        from shared.utils import decode_base58
+
+        address_1 = "1BenRpVUFK65JFWcQSuHnJKzc4M8ZP8Eqa"
+        h160 = decode_base58(address_1)
+        p2pkh_script_pubkey = p2pkh_script(h160)
+        self.assertEqual(p2pkh_script_pubkey.address(), address_1)
+        address_2 = "mrAjisaT4LXL5MzE81sfcDYKU3wqWSvf9q"
+        self.assertEqual(p2pkh_script_pubkey.address(testnet=True), address_2)
+        address_3 = "3CLoMMyuoDQTPRD3XYZtCvgvkadrAdvdXh"
+        h160 = decode_base58(address_3)
+        p2sh_script_pubkey = p2sh_script(h160)
+        self.assertEqual(p2sh_script_pubkey.address(), address_3)
+        address_4 = "2N3u1R6uwQfuobCqbCgBkpsgBxvr1tZpe7B"
+        self.assertEqual(p2sh_script_pubkey.address(testnet=True), address_4)
