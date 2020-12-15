@@ -168,6 +168,47 @@ def bytes_to_bit_field(some_bytes):
     return flag_bits
 
 
+# Adaption of: http://stackoverflow.com/questions/13305290/is-there-a-pure-python-implementation-of-murmurhash
+def murmur3(data, seed=0):
+    c1 = 0xCC9E2D51
+    c2 = 0x1B873593
+    length = len(data)
+    h1 = seed
+    roundedEnd = length & 0xFFFFFFFC
+    for i in range(0, roundedEnd, 4):
+        k1 = (
+            (data[i] & 0xFF)
+            | ((data[i + 1] & 0xFF) << 8)
+            | ((data[i + 2] & 0xFF) << 16)
+            | (data[i + 3] << 24)
+        )
+        k1 *= c1
+        k1 = (k1 << 15) | ((k1 & 0xFFFFFFFF) >> 17)
+        k1 *= c2
+        h1 ^= k1
+        h1 = (h1 << 13) | ((h1 & 0xFFFFFFFF) >> 19)
+        h1 = h1 * 5 + 0xE6546B64
+    k1 = 0
+    val = length & 0x03
+    if val == 3:
+        k1 = (data[roundedEnd + 2] & 0xFF) << 16
+    if val in [2, 3]:
+        k1 |= (data[roundedEnd + 1] & 0xFF) << 8
+    if val in [1, 2, 3]:
+        k1 |= data[roundedEnd] & 0xFF
+        k1 *= c1
+        k1 = (k1 << 15) | ((k1 & 0xFFFFFFFF) >> 17)
+        k1 *= c2
+        h1 ^= k1
+    h1 ^= length
+    h1 ^= (h1 & 0xFFFFFFFF) >> 16
+    h1 *= 0x85EBCA6B
+    h1 ^= (h1 & 0xFFFFFFFF) >> 13
+    h1 *= 0xC2B2AE35
+    h1 ^= (h1 & 0xFFFFFFFF) >> 16
+    return h1 & 0xFFFFFFFF
+
+
 class UtilsTest(TestCase):
     def test_base58(self):
         addr = "mnrVtF8DWjMu839VW3rBfgYaAfKk8983Xf"
@@ -278,3 +319,90 @@ class UtilsTest(TestCase):
         )
         want_hash = bytes.fromhex(want_hex_hash)
         self.assertEqual(merkle_root(tx_hashes), want_hash)
+
+    def test_bit_field_to_bytes(self):
+        bit_field = [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            1,
+            0,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+        ]
+        want = "4000600a080000010940"
+        self.assertEqual(bit_field_to_bytes(bit_field).hex(), want)
+        self.assertEqual(bytes_to_bit_field(bytes.fromhex(want)), bit_field)
